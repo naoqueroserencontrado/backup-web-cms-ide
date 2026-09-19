@@ -29,7 +29,25 @@
   </div>
 
   <div id="app">
-    <h1>Web CMS / IDE</h1>
+    <!-- Cabeçalho Principal Global -->
+    <header class="app-header" id="main-header">
+      <h1>Web CMS / IDE</h1>
+
+      <!-- Botão de Desligar Vermelho + Menu Flutuante -->
+      <div id="logout-wrapper" style="display: none;">
+        <button id="power-toggle-btn" class="power-btn" title="Desconectar / Trocar Token">
+          <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
+            <line x1="12" y1="2" x2="12" y2="12"></line>
+          </svg>
+        </button>
+
+        <!-- Popover Flutuante de Confirmação -->
+        <div id="logout-popover" class="logout-popover-hidden">
+          <button id="logout-btn" class="danger-btn">Desconectar / Trocar Token</button>
+        </div>
+      </div>
+    </header>
 
     <!-- Tela de Autenticação -->
     <section id="login-section">
@@ -44,23 +62,29 @@
     <section id="dashboard-section" style="display: none;">
       <div class="dashboard-header">
         <h2>Meus Repositórios</h2>
-        <button id="new-repo-btn">+ Novo Repositório</button>
+        <button id="new-repo-btn">Novo +</button>
       </div>
-      <button id="logout-btn" class="danger-btn" style="margin-top: 10px;">Desconectar / Trocar Token</button>
+
       <ul id="repo-list"></ul>
     </section>
 
     <!-- Painel do Editor de Arquivos -->
     <section id="editor-section" style="display: none;">
-      <button id="back-to-repos-btn">← Voltar aos Repositórios</button>
-      <h2 id="current-repo-title"></h2>
+      <div class="editor-top-bar">
+        <h2 id="current-repo-title"></h2>
+        <button id="back-to-repos-btn">← Voltar aos Repositórios</button>
+      </div>
 
       <div class="workspace">
         <!-- Navegador de Arquivos -->
         <div class="file-explorer" id="file-explorer">
           <div class="explorer-header">
             <h3>Arquivos</h3>
-            <button id="new-file-btn" title="Novo Arquivo">+</button>
+            <div class="explorer-actions">
+              <button id="toggle-delete-mode-btn" class="danger-btn" title="Modo de Exclusão">🗑️-</button>
+              <button id="new-folder-btn" title="Nova Pasta">📁+</button>
+              <button id="new-file-btn" title="Novo Arquivo">📄+</button>
+            </div>
           </div>
           <p id="current-path-display" class="path-display">/</p>
           <ul id="file-tree"></ul>
@@ -68,17 +92,21 @@
 
         <!-- Área do Editor -->
         <div class="code-editor-area" id="code-editor-area">
-          <div class="editor-header">
+          <div class="editor-header" id="editor-header-bar">
             <h3 id="current-file-title">Nenhum arquivo selecionado</h3>
             <div class="editor-actions">
-              <button id="preview-btn" class="secondary-btn" style="display: none;">👁️ Preview</button>
-              <button id="expand-btn" class="secondary-btn" style="display: none;">⛶ Expandir</button>
-              <button id="save-file-btn" style="display: none;">Salvar</button>
-              <button id="delete-file-btn" class="danger-btn" style="display: none;">Excluir</button>
+              <button id="preview-btn" class="secondary-btn action-hidden">👁️ Preview</button>
+              <button id="expand-btn" class="secondary-btn action-hidden">
+                <span id="expand-icon" class="icon-svg">
+                  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+                </span> 
+                <span id="expand-text">Expandir</span>
+              </button>
+              <button id="delete-file-btn" class="danger-btn action-hidden">Excluir</button>
+              <button id="save-file-btn" class="save-disabled action-hidden" disabled>Salvar</button>
             </div>
           </div>
           
-          <!-- Editor Misto -->
           <div id="monaco-container"></div>
           <textarea id="mobile-editor" placeholder="Selecione um arquivo..." style="display: none;"></textarea>
 
