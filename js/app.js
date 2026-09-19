@@ -2,15 +2,19 @@ let github = null;
 let currentUser = null;
 let currentRepo = null;
 let currentFile = null;
+let originalFileContent = '';
+let hasUnsavedChanges = false;
 let currentFolderPath = '';
 let monacoEditor = null;
 let isExpanded = false;
+let isDeleteMode = false;
 const isMobile = window.innerWidth <= 768;
 
 const tokenInput = document.getElementById('token-input');
 const connectBtn = document.getElementById('connect-btn');
 const authStatus = document.getElementById('auth-status');
 
+const mainHeader = document.getElementById('main-header');
 const loginSection = document.getElementById('login-section');
 const dashboardSection = document.getElementById('dashboard-section');
 const editorSection = document.getElementById('editor-section');
@@ -23,14 +27,23 @@ const currentFileTitle = document.getElementById('current-file-title');
 const saveFileBtn = document.getElementById('save-file-btn');
 const deleteFileBtn = document.getElementById('delete-file-btn');
 const newFileBtn = document.getElementById('new-file-btn');
+const newFolderBtn = document.getElementById('new-folder-btn');
+const toggleDeleteModeBtn = document.getElementById('toggle-delete-mode-btn');
 const newRepoBtn = document.getElementById('new-repo-btn');
+
+const logoutWrapper = document.getElementById('logout-wrapper');
+const logoutPopover = document.getElementById('logout-popover');
+const powerToggleBtn = document.getElementById('power-toggle-btn');
 const logoutBtn = document.getElementById('logout-btn');
+
 const backToReposBtn = document.getElementById('back-to-repos-btn');
 const currentPathDisplay = document.getElementById('current-path-display');
 const mobileEditor = document.getElementById('mobile-editor');
 
 const previewBtn = document.getElementById('preview-btn');
 const expandBtn = document.getElementById('expand-btn');
+const expandIcon = document.getElementById('expand-icon');
+const expandText = document.getElementById('expand-text');
 const fileExplorer = document.getElementById('file-explorer');
 const codeEditorArea = document.getElementById('code-editor-area');
 
@@ -41,6 +54,10 @@ const previewFrame = document.getElementById('preview-frame');
 const loadingOverlay = document.getElementById('loading-overlay');
 const loadingMessage = document.getElementById('loading-message');
 const toastContainer = document.getElementById('toast-container');
+
+// SVG ÍCONES PARA RETRAIR E EXPANDIR
+const expandSVG = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>`;
+const retractSVG = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none"><path d="M4 14h6v6M20 10h-6V4M10 14l-7 7M14 10l7-7"/></svg>`;
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -65,6 +82,38 @@ function showToast(message, type = 'success') {
   }, 3500);
 }
 
+function setActionButtonVisibility(button, visible) {
+  if (visible) {
+    button.classList.remove('action-hidden');
+    button.classList.add('action-visible');
+  } else {
+    button.classList.remove('action-visible');
+    button.classList.add('action-hidden');
+  }
+}
+
+function updateSaveButtonState(modified) {
+  hasUnsavedChanges = modified;
+  if (modified) {
+    saveFileBtn.classList.remove('save-disabled');
+    saveFileBtn.classList.add('save-active');
+    saveFileBtn.disabled = false;
+    saveFileBtn.textContent = '* Salvar';
+  } else {
+    saveFileBtn.classList.remove('save-active');
+    saveFileBtn.classList.add('save-disabled');
+    saveFileBtn.disabled = true;
+    saveFileBtn.textContent = 'Salvar';
+  }
+}
+
+function checkUnsavedChanges() {
+  if (hasUnsavedChanges) {
+    return confirm('Você possui alterações não salvas no arquivo atual. Deseja descartá-las?');
+  }
+  return true;
+}
+
 function getLanguageFromFilename(filename) {
   const ext = filename.split('.').pop().toLowerCase();
   switch (ext) {
@@ -86,8 +135,22 @@ if (!isMobile) {
       theme: 'vs-dark',
       automaticLayout: true
     });
+
+    monacoEditor.onDidChangeModelContent(() => {
+      if (currentFile) {
+        const currentContent = monacoEditor.getValue();
+        updateSaveButtonState(currentContent !== originalFileContent);
+      }
+    });
   });
 }
+
+mobileEditor.addEventListener('input', () => {
+  if (currentFile) {
+    const currentContent = mobileEditor.value;
+    updateSaveButtonState(currentContent !== originalFileContent);
+  }
+});
 
 window.addEventListener('load', () => {
   const savedToken = localStorage.getItem('gh_token');
@@ -102,6 +165,7 @@ async function autoConnect(token) {
   try {
     github = new GitHubAPI(token);
     currentUser = await github.getUser();
+    logoutWrapper.style.display = 'flex';
     await loadRepositories();
     showToast(`Bem-vindo de volta, ${currentUser.login}!`);
   } catch (error) {
@@ -125,6 +189,7 @@ connectBtn.addEventListener('click', async () => {
     currentUser = await github.getUser();
 
     localStorage.setItem('gh_token', token);
+    logoutWrapper.style.display = 'flex';
     await loadRepositories();
     showToast('Conectado com sucesso!');
   } catch (error) {
@@ -134,7 +199,28 @@ connectBtn.addEventListener('click', async () => {
   }
 });
 
+/* INTERAÇÃO DO POPOVER FLUTUANTE DO BOTÃO DESLIGAR */
+powerToggleBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const isVisible = logoutPopover.classList.contains('logout-popover-visible');
+  if (isVisible) {
+    logoutPopover.classList.remove('logout-popover-visible');
+    logoutPopover.classList.add('logout-popover-hidden');
+  } else {
+    logoutPopover.classList.remove('logout-popover-hidden');
+    logoutPopover.classList.add('logout-popover-visible');
+  }
+});
+
+document.addEventListener('click', (e) => {
+  if (!logoutWrapper.contains(e.target)) {
+    logoutPopover.classList.remove('logout-popover-visible');
+    logoutPopover.classList.add('logout-popover-hidden');
+  }
+});
+
 logoutBtn.addEventListener('click', () => {
+  if (!checkUnsavedChanges()) return;
   localStorage.removeItem('gh_token');
   location.reload();
 });
@@ -144,6 +230,7 @@ async function loadRepositories() {
   repoList.innerHTML = '';
   try {
     const repos = await github.getRepositories();
+    mainHeader.style.display = 'flex';
     loginSection.style.display = 'none';
     editorSection.style.display = 'none';
     dashboardSection.style.display = 'block';
@@ -228,6 +315,7 @@ async function selectRepo(repoName) {
   currentRepo = repoName;
   currentRepoTitle.textContent = `Repositório: ${repoName}`;
 
+  mainHeader.style.display = 'none';
   dashboardSection.style.display = 'none';
   editorSection.style.display = 'block';
 
@@ -238,6 +326,17 @@ async function selectRepo(repoName) {
   currentFolderPath = '';
   await loadFiles(currentFolderPath);
 }
+
+toggleDeleteModeBtn.addEventListener('click', () => {
+  isDeleteMode = !isDeleteMode;
+  toggleDeleteModeBtn.classList.toggle('delete-mode-active', isDeleteMode);
+  showToast(isDeleteMode ? 'Modo de exclusão ativado.' : 'Modo de exclusão desativado.');
+  
+  const actionContainers = document.querySelectorAll('.tree-item-actions');
+  actionContainers.forEach(container => {
+    container.style.display = isDeleteMode ? 'flex' : 'none';
+  });
+});
 
 async function loadFiles(path = '') {
   showLoading('Carregando arquivos...');
@@ -253,6 +352,7 @@ async function loadFiles(path = '') {
       backLi.innerHTML = '<strong>⬅️ .. (Voltar pasta)</strong>';
       backLi.style.cursor = 'pointer';
       backLi.addEventListener('click', async () => {
+        if (!checkUnsavedChanges()) return;
         const pathParts = currentFolderPath.split('/');
         pathParts.pop();
         currentFolderPath = pathParts.join('/');
@@ -264,16 +364,39 @@ async function loadFiles(path = '') {
     contents.forEach(item => {
       const li = document.createElement('li');
       const icon = item.type === 'dir' ? '📁' : '📄';
-      li.textContent = `${icon} ${item.name}`;
-      li.style.cursor = 'pointer';
+
+      li.innerHTML = `
+        <span class="item-name">${icon} ${item.name}</span>
+        <div class="tree-item-actions" style="display: ${isDeleteMode ? 'flex' : 'none'};">
+          <button class="danger-btn" style="padding: 2px 6px; font-size: 11px;" title="Excluir">✖</button>
+        </div>
+      `;
+
+      const nameSpan = li.querySelector('.item-name');
+      const deleteBtn = li.querySelector('button');
 
       if (item.type === 'dir') {
-        li.addEventListener('click', async () => {
+        nameSpan.addEventListener('click', async () => {
+          if (!checkUnsavedChanges()) return;
           currentFolderPath = item.path;
           await loadFiles(currentFolderPath);
         });
+
+        deleteBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          await deleteFolder(item.path, item.name);
+        });
+
       } else if (item.type === 'file') {
-        li.addEventListener('click', () => openFile(item.path));
+        nameSpan.addEventListener('click', () => {
+          if (!checkUnsavedChanges()) return;
+          openFile(item.path);
+        });
+
+        deleteBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          await deleteFileByPath(item.path, item.sha);
+        });
       }
 
       fileTree.appendChild(li);
@@ -281,6 +404,54 @@ async function loadFiles(path = '') {
   } catch (error) {
     fileTree.innerHTML = '<li>Erro ao carregar arquivos.</li>';
     showToast('Erro ao carregar estrutura de arquivos.', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+async function deleteFolder(folderPath, folderName) {
+  const confirmText = prompt(`Tem certeza que deseja excluir a pasta "${folderName}" e TODO o seu conteúdo? Digite "${folderName}" para confirmar:`);
+  if (confirmText !== folderName) {
+    showToast('Confirmação incorreta. Operação cancelada.', 'error');
+    return;
+  }
+
+  showLoading(`Excluindo pasta ${folderName} e seus arquivos...`);
+  try {
+    await github.deleteFolder(currentUser.login, currentRepo, folderPath);
+    showToast('Pasta excluída com sucesso!');
+    await loadFiles(currentFolderPath);
+  } catch (error) {
+    showToast('Erro ao excluir pasta: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+async function deleteFileByPath(filePath, sha) {
+  const confirmDelete = confirm(`Tem certeza que deseja excluir o arquivo "${filePath}"?`);
+  if (!confirmDelete) return;
+
+  showLoading('Excluindo arquivo...');
+  try {
+    await github.deleteFile(currentUser.login, currentRepo, filePath, sha);
+    if (currentFile && currentFile.path === filePath) {
+      currentFile = null;
+      originalFileContent = '';
+      updateSaveButtonState(false);
+      if (isMobile) mobileEditor.value = '';
+      else monacoEditor.setValue('// Selecione um arquivo para começar a editar...');
+
+      setActionButtonVisibility(saveFileBtn, false);
+      setActionButtonVisibility(deleteFileBtn, false);
+      setActionButtonVisibility(expandBtn, false);
+      setActionButtonVisibility(previewBtn, false);
+      currentFileTitle.textContent = 'Nenhum arquivo selecionado';
+    }
+    showToast('Arquivo excluído com sucesso!');
+    await loadFiles(currentFolderPath);
+  } catch (error) {
+    showToast('Erro ao excluir arquivo: ' + error.message, 'error');
   } finally {
     hideLoading();
   }
@@ -299,6 +470,7 @@ async function openFile(filePath) {
       name: fileData.name
     };
 
+    originalFileContent = decodedContent;
     currentFileTitle.textContent = `Arquivo: ${fileData.name}`;
 
     if (isMobile) {
@@ -310,15 +482,16 @@ async function openFile(filePath) {
       setTimeout(() => monacoEditor.layout(), 50);
     }
 
-    saveFileBtn.style.display = 'inline-block';
-    deleteFileBtn.style.display = 'inline-block';
-    expandBtn.style.display = 'inline-block';
+    updateSaveButtonState(false);
 
-    // Exibe o botão de Preview se for HTML
+    setActionButtonVisibility(saveFileBtn, true);
+    setActionButtonVisibility(deleteFileBtn, true);
+    setActionButtonVisibility(expandBtn, true);
+
     if (fileData.name.toLowerCase().endsWith('.html') || fileData.name.toLowerCase().endsWith('.htm')) {
-      previewBtn.style.display = 'inline-block';
+      setActionButtonVisibility(previewBtn, true);
     } else {
-      previewBtn.style.display = 'none';
+      setActionButtonVisibility(previewBtn, false);
     }
   } catch (error) {
     showToast('Erro ao abrir arquivo: ' + error.message, 'error');
@@ -328,7 +501,7 @@ async function openFile(filePath) {
 }
 
 saveFileBtn.addEventListener('click', async () => {
-  if (!currentFile) return;
+  if (!currentFile || !hasUnsavedChanges) return;
 
   showLoading('Salvando alterações no GitHub...');
 
@@ -343,6 +516,8 @@ saveFileBtn.addEventListener('click', async () => {
     );
 
     currentFile.sha = result.content.sha;
+    originalFileContent = newContent;
+    updateSaveButtonState(false);
     showToast('Alterações salvas com sucesso!');
   } catch (error) {
     showToast('Erro ao salvar: ' + error.message, 'error');
@@ -351,33 +526,33 @@ saveFileBtn.addEventListener('click', async () => {
   }
 });
 
-// Botão Expandir / Restaurar Editor
+/* ALTERAÇÃO DOS ÍCONES COM SVG VETORIAL */
 expandBtn.addEventListener('click', () => {
   isExpanded = !isExpanded;
 
   if (isExpanded) {
     codeEditorArea.classList.add('fullscreen-editor');
     fileExplorer.style.display = 'none';
-    expandBtn.textContent = '🗗 Restaurar';
+    expandIcon.innerHTML = retractSVG;
+    expandText.textContent = 'Retrair';
   } else {
     codeEditorArea.classList.remove('fullscreen-editor');
     fileExplorer.style.display = 'block';
-    expandBtn.textContent = '⛶ Expandir';
+    expandIcon.innerHTML = expandSVG;
+    expandText.textContent = 'Expandir';
   }
 
   if (monacoEditor && !isMobile) {
-    setTimeout(() => monacoEditor.layout(), 100);
+    setTimeout(() => monacoEditor.layout(), 50);
   }
 });
 
-// Botão Preview ao Vivo
 previewBtn.addEventListener('click', () => {
   if (!currentFile) return;
 
   const content = isMobile ? mobileEditor.value : monacoEditor.getValue();
   previewModal.style.display = 'flex';
 
-  // Injeta o conteúdo no iframe
   const doc = previewFrame.contentWindow.document;
   doc.open();
   doc.write(content);
@@ -389,7 +564,9 @@ closePreviewBtn.addEventListener('click', () => {
 });
 
 newFileBtn.addEventListener('click', async () => {
-  const filename = prompt('Digite o nome do novo arquivo (ex: pagina.html ou css/estilo.css):');
+  if (!checkUnsavedChanges()) return;
+
+  const filename = prompt('Digite o nome do novo arquivo (ex: pagina.html):');
   if (!filename) return;
 
   const fullPath = currentFolderPath ? `${currentFolderPath}/${filename}` : filename;
@@ -425,68 +602,73 @@ newFileBtn.addEventListener('click', async () => {
   }
 });
 
-deleteFileBtn.addEventListener('click', async () => {
-  if (!currentFile) return;
+newFolderBtn.addEventListener('click', async () => {
+  if (!checkUnsavedChanges()) return;
 
-  const confirmDelete = confirm(`Tem certeza que deseja excluir o arquivo "${currentFile.path}"?`);
-  if (!confirmDelete) return;
+  const folderName = prompt('Digite o nome da nova pasta:');
+  if (!folderName) return;
 
-  showLoading('Excluindo arquivo e atualizando...');
+  const fullPath = currentFolderPath ? `${currentFolderPath}/${folderName}/.gitkeep` : `${folderName}/.gitkeep`;
+
+  showLoading('Criando pasta...');
   try {
-    await github.deleteFile(
+    await github.updateFile(
       currentUser.login,
       currentRepo,
-      currentFile.path,
-      currentFile.sha
+      fullPath,
+      '',
+      null,
+      `Criada pasta ${folderName} via Web CMS`
     );
 
-    currentFile = null;
-    if (isMobile) mobileEditor.value = '';
-    else monacoEditor.setValue('// Selecione um arquivo para começar a editar...');
-
-    saveFileBtn.style.display = 'none';
-    deleteFileBtn.style.display = 'none';
-    expandBtn.style.display = 'none';
-    previewBtn.style.display = 'none';
-    currentFileTitle.textContent = 'Nenhum arquivo selecionado';
-
     let attempts = 0;
-    let removed = false;
-    while (attempts < 4 && !removed) {
+    let found = false;
+    while (attempts < 4 && !found) {
       await delay(1000);
       const contents = await github.getContents(currentUser.login, currentRepo, currentFolderPath);
-      if (Array.isArray(contents) && !contents.some(c => c.path === currentFile?.path)) {
-        removed = true;
+      if (Array.isArray(contents) && contents.some(c => c.name.toLowerCase() === folderName.toLowerCase())) {
+        found = true;
       }
       attempts++;
     }
 
-    showToast('Arquivo excluído com sucesso!');
+    showToast('Pasta criada com sucesso!');
     await loadFiles(currentFolderPath);
   } catch (error) {
-    showToast('Erro ao excluir arquivo: ' + error.message, 'error');
+    showToast('Erro ao criar pasta: ' + error.message, 'error');
   } finally {
     hideLoading();
   }
 });
 
+deleteFileBtn.addEventListener('click', async () => {
+  if (!currentFile) return;
+  await deleteFileByPath(currentFile.path, currentFile.sha);
+});
+
 backToReposBtn.addEventListener('click', async () => {
+  if (!checkUnsavedChanges()) return;
+
   currentFile = null;
+  originalFileContent = '';
   currentFolderPath = '';
+  updateSaveButtonState(false);
+
   if (isExpanded) {
     isExpanded = false;
     codeEditorArea.classList.remove('fullscreen-editor');
     fileExplorer.style.display = 'block';
-    expandBtn.textContent = '⛶ Expandir';
+    expandIcon.innerHTML = expandSVG;
+    expandText.textContent = 'Expandir';
   }
 
   if (isMobile) mobileEditor.value = '';
   else monacoEditor.setValue('// Selecione um arquivo para começar a editar...');
 
-  saveFileBtn.style.display = 'none';
-  deleteFileBtn.style.display = 'none';
-  expandBtn.style.display = 'none';
-  previewBtn.style.display = 'none';
+  setActionButtonVisibility(saveFileBtn, false);
+  setActionButtonVisibility(deleteFileBtn, false);
+  setActionButtonVisibility(expandBtn, false);
+  setActionButtonVisibility(previewBtn, false);
   currentFileTitle.textContent = 'Nenhum arquivo selecionado';
   await loadRepositories();
 });
