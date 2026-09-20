@@ -199,7 +199,6 @@ connectBtn.addEventListener('click', async () => {
   }
 });
 
-/* INTERAÇÃO DO POPOVER FLUTUANTE DO BOTÃO DESLIGAR */
 powerToggleBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   const isVisible = logoutPopover.classList.contains('logout-popover-visible');
@@ -239,10 +238,9 @@ async function loadRepositories() {
     repos.forEach(repo => {
       const li = document.createElement('li');
       li.innerHTML = `
-        <strong>${repo.name}</strong>
+        <a class="repo-link" onclick="selectRepo('${repo.name}')">${repo.name}</a>
         <div>
-          <button onclick="selectRepo('${repo.name}')">Abrir</button>
-          <button class="danger-btn" onclick="confirmDeleteRepo('${repo.name}')">Excluir</button>
+          <button class="danger-btn" style="padding: 4px 8px; font-size: 12px;" onclick="confirmDeleteRepo('${repo.name}')" title="Excluir Repositório">✖</button>
         </div>
       `;
       repoList.appendChild(li);
@@ -344,12 +342,24 @@ async function loadFiles(path = '') {
   fileTree.innerHTML = '';
 
   try {
-    const contents = await github.getContents(currentUser.login, currentRepo, path);
+    let contents = await github.getContents(currentUser.login, currentRepo, path);
+    
+    if (!Array.isArray(contents)) {
+      contents = [];
+    }
+
     fileTree.innerHTML = '';
+
+    contents.sort((a, b) => {
+      if (a.type === b.type) {
+        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      }
+      return a.type === 'dir' ? -1 : 1;
+    });
 
     if (path !== '') {
       const backLi = document.createElement('li');
-      backLi.innerHTML = '<strong>⬅️ .. (Voltar pasta)</strong>';
+      backLi.innerHTML = '<span class="tree-item-title is-folder">⬅️ .. (Voltar pasta)</span>';
       backLi.style.cursor = 'pointer';
       backLi.addEventListener('click', async () => {
         if (!checkUnsavedChanges()) return;
@@ -361,22 +371,31 @@ async function loadFiles(path = '') {
       fileTree.appendChild(backLi);
     }
 
-    contents.forEach(item => {
+    for (const item of contents) {
       const li = document.createElement('li');
-      const icon = item.type === 'dir' ? '📁' : '📄';
+      let icon = item.type === 'dir' ? '📁' : '📄';
+      const textClass = item.type === 'dir' ? 'is-folder' : 'is-file';
 
       li.innerHTML = `
-        <span class="item-name">${icon} ${item.name}</span>
+        <span class="tree-item-title ${textClass}"><span class="item-icon">${icon}</span> <span class="item-name">${item.name}</span></span>
         <div class="tree-item-actions" style="display: ${isDeleteMode ? 'flex' : 'none'};">
           <button class="danger-btn" style="padding: 2px 6px; font-size: 11px;" title="Excluir">✖</button>
         </div>
       `;
 
-      const nameSpan = li.querySelector('.item-name');
+      const titleSpan = li.querySelector('.tree-item-title');
       const deleteBtn = li.querySelector('button');
 
       if (item.type === 'dir') {
-        nameSpan.addEventListener('click', async () => {
+        github.getContents(currentUser.login, currentRepo, item.path).then(subContents => {
+          const iconSpan = li.querySelector('.item-icon');
+          if (iconSpan) {
+            const realFiles = Array.isArray(subContents) ? subContents.filter(f => f.name !== '.gitkeep') : [];
+            iconSpan.textContent = realFiles.length > 0 ? '📂' : '📁';
+          }
+        }).catch(() => {});
+
+        titleSpan.addEventListener('click', async () => {
           if (!checkUnsavedChanges()) return;
           currentFolderPath = item.path;
           await loadFiles(currentFolderPath);
@@ -388,7 +407,7 @@ async function loadFiles(path = '') {
         });
 
       } else if (item.type === 'file') {
-        nameSpan.addEventListener('click', () => {
+        titleSpan.addEventListener('click', () => {
           if (!checkUnsavedChanges()) return;
           openFile(item.path);
         });
@@ -400,10 +419,17 @@ async function loadFiles(path = '') {
       }
 
       fileTree.appendChild(li);
-    });
+    }
   } catch (error) {
-    fileTree.innerHTML = '<li>Erro ao carregar arquivos.</li>';
-    showToast('Erro ao carregar estrutura de arquivos.', 'error');
+    if (path !== '') {
+      const pathParts = path.split('/');
+      pathParts.pop();
+      currentFolderPath = pathParts.join('/');
+      await loadFiles(currentFolderPath);
+    } else {
+      fileTree.innerHTML = '<li>Nenhum arquivo encontrado.</li>';
+      hideLoading();
+    }
   } finally {
     hideLoading();
   }
@@ -435,12 +461,19 @@ async function deleteFileByPath(filePath, sha) {
   showLoading('Excluindo arquivo...');
   try {
     await github.deleteFile(currentUser.login, currentRepo, filePath, sha);
+
     if (currentFile && currentFile.path === filePath) {
       currentFile = null;
       originalFileContent = '';
       updateSaveButtonState(false);
-      if (isMobile) mobileEditor.value = '';
-      else monacoEditor.setValue('// Selecione um arquivo para começar a editar...');
+      
+      // Oculta a caixa de texto no mobile ao excluir/desselecionar arquivo
+      if (isMobile) {
+        mobileEditor.value = '';
+        mobileEditor.style.display = 'none';
+      } else {
+        monacoEditor.setValue('// Selecione um arquivo para começar a editar...');
+      }
 
       setActionButtonVisibility(saveFileBtn, false);
       setActionButtonVisibility(deleteFileBtn, false);
@@ -448,8 +481,10 @@ async function deleteFileByPath(filePath, sha) {
       setActionButtonVisibility(previewBtn, false);
       currentFileTitle.textContent = 'Nenhum arquivo selecionado';
     }
+
     showToast('Arquivo excluído com sucesso!');
     await loadFiles(currentFolderPath);
+
   } catch (error) {
     showToast('Erro ao excluir arquivo: ' + error.message, 'error');
   } finally {
@@ -475,6 +510,7 @@ async function openFile(filePath) {
 
     if (isMobile) {
       mobileEditor.value = decodedContent;
+      mobileEditor.style.display = 'block'; // Exibe a caixa de texto apenas ao abrir um arquivo
     } else if (monacoEditor) {
       monacoEditor.setValue(decodedContent);
       const language = getLanguageFromFilename(fileData.name);
@@ -487,12 +523,19 @@ async function openFile(filePath) {
     setActionButtonVisibility(saveFileBtn, true);
     setActionButtonVisibility(deleteFileBtn, true);
     setActionButtonVisibility(expandBtn, true);
+    setActionButtonVisibility(previewBtn, true);
 
+    // LÓGICA DO BOTÃO PREVIEW: Permanece visível, mas fica cinza e desabilitado em arquivos não-HTML
     if (fileData.name.toLowerCase().endsWith('.html') || fileData.name.toLowerCase().endsWith('.htm')) {
-      setActionButtonVisibility(previewBtn, true);
+      previewBtn.disabled = false;
+      previewBtn.classList.remove('preview-disabled');
+      previewBtn.classList.add('preview-active');
     } else {
-      setActionButtonVisibility(previewBtn, false);
+      previewBtn.disabled = true;
+      previewBtn.classList.remove('preview-active');
+      previewBtn.classList.add('preview-disabled');
     }
+
   } catch (error) {
     showToast('Erro ao abrir arquivo: ' + error.message, 'error');
   } finally {
@@ -526,7 +569,6 @@ saveFileBtn.addEventListener('click', async () => {
   }
 });
 
-/* ALTERAÇÃO DOS ÍCONES COM SVG VETORIAL */
 expandBtn.addEventListener('click', () => {
   isExpanded = !isExpanded;
 
@@ -548,7 +590,7 @@ expandBtn.addEventListener('click', () => {
 });
 
 previewBtn.addEventListener('click', () => {
-  if (!currentFile) return;
+  if (!currentFile || previewBtn.disabled) return;
 
   const content = isMobile ? mobileEditor.value : monacoEditor.getValue();
   previewModal.style.display = 'flex';
@@ -662,8 +704,12 @@ backToReposBtn.addEventListener('click', async () => {
     expandText.textContent = 'Expandir';
   }
 
-  if (isMobile) mobileEditor.value = '';
-  else monacoEditor.setValue('// Selecione um arquivo para começar a editar...');
+  if (isMobile) {
+    mobileEditor.value = '';
+    mobileEditor.style.display = 'none';
+  } else {
+    monacoEditor.setValue('// Selecione um arquivo para começar a editar...');
+  }
 
   setActionButtonVisibility(saveFileBtn, false);
   setActionButtonVisibility(deleteFileBtn, false);
